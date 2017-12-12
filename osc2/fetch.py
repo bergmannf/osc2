@@ -2,12 +2,14 @@
 and to fetch build dependencies from the api or a mirror.
 
 """
+from urllib import urlencode
 
 import os
 from collections import namedtuple
 
 import urlparse
 from urlgrabber import grabber, mirror
+from urlgrabber.grabber import URLGrabber
 
 from osc2.build import BuildResult
 from osc2.util.listinfo import ListInfo
@@ -15,6 +17,14 @@ from osc2.util.notify import Notifier
 from osc2.util.io import copy_file
 from osc2.remote import RORemoteFile
 from osc2.httprequest import HTTPError, build_url
+
+
+def url_to_parts(url):
+    parts = urlparse.urlsplit(url)
+    host, path, query = ('{}://{}'.format(parts.scheme, parts.netloc),
+                         parts.path,
+                         {} if not parts.query else parts.query)
+    return host, path, query
 
 
 class CacheManager(object):
@@ -244,7 +254,7 @@ class CustomMirrorGroup(mirror.MirrorGroup, object):
         """
         url = super(CustomMirrorGroup, self)._get_mirror(*args, **kwargs)
         # store them in "human readable" format
-        host, path, query = url['mirror']
+        host, path, query = url_to_parts(url['mirror'])
         self.used_mirror_urls.append(build_url(host, path, **query))
         return url
 
@@ -259,7 +269,7 @@ class CustomMirrorGroup(mirror.MirrorGroup, object):
         return super(CustomMirrorGroup, self).urlopen('')
 
 
-class MirrorUrlOpener(object):
+class MirrorUrlOpener(URLGrabber):
     """Used to open a mirror url."""
 
     def __init__(self, bdep):
@@ -282,7 +292,7 @@ class MirrorUrlOpener(object):
         **kwargs -- kwargs are ignored
 
         """
-        host, path, query = url
+        host, path, query = url_to_parts(url)
         f = None
         try:
             f = RORemoteFile(path, apiurl=host, lazy_open=False, **query)
@@ -464,7 +474,12 @@ class BuildDependencyFetcher(object):
             components = url_builder(binfo, bdep)
             if not [i for i in components if i is None]:
                 urls.append({'mirror': components})
-        mgroup = CustomMirrorGroup(MirrorUrlOpener(bdep), mirrors=urls)
+        # base_urls = urls
+        base_urls = ['{base}{path}{params}'.format(
+            base=url['mirror'][0],
+            path=url['mirror'][1],
+            params=urlencode(url['mirror'][2])) for url in urls]
+        mgroup = CustomMirrorGroup(MirrorUrlOpener(bdep), mirrors=base_urls)
         # in this case there is no fetch result
         self._notifier.pre_fetch(bdep, None)
         f = None
